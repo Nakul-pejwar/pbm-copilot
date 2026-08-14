@@ -1,4 +1,5 @@
 import io
+import logging
 import re
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -7,6 +8,8 @@ from .db import ensure_schema
 from .rules import evaluate
 from .anomaly import fit_model, score_model
 from .scoring import final_score
+
+log = logging.getLogger("upload")
 
 REQUIRED_COLUMNS = [
     "claim_id", "claim_date", "member_id", "provider_id", "plan_id",
@@ -167,7 +170,7 @@ def upload(raw, filename, company_name):
             {"cid": company_id, "name": company_name.strip(), "n": len(df)},
         )
 
-    return {
+    result = {
         "company_id": company_id,
         "rows_loaded": len(df),
         "anomalies": int(df["anomaly"].sum()),
@@ -175,3 +178,12 @@ def upload(raw, filename, company_name):
             k: int(v) for k, v in df["risk_level"].value_counts().items()
         },
     }
+
+    try:
+        from .superset_client import dashboard_url
+        result["dashboard_url"] = dashboard_url(company_id)
+    except Exception as e:
+        log.warning("Superset provisioning failed after upload: %s", e)
+        result["dashboard_url"] = None
+
+    return result

@@ -64,6 +64,14 @@ Expected columns (exact, in any order): `claim_id`, `claim_date`, `member_id`, `
 
 Re-uploading the same company replaces its existing data. Errors are reported per file (missing columns, bad types, duplicate `claim_id`s, size/row limits). Seed data is tagged `company_id = SEED_DEMO`.
 
+### Automatic Superset provisioning
+
+After every upload the API self-provisions Superset (idempotent, via the Superset REST API): the `PBM Claims` database connection, the `claims` dataset, 6 charts (total claims, anomalies, risk-level pie, anomalies by provider, claim trend, top-risk table) and the dashboard `PBM Claims Risk & Compliance Command Center` with a `company_id` native filter.
+
+The upload response and the upload UI include an **"Open your dashboard"** link pre-filtered to that company (`?native_filters=...`), so a company member goes straight from upload to their charts. The upload history table links each company's filtered dashboard too. `POST /api/provision` re-provisions manually; provisioning also self-heals at API startup.
+
+Superset login remains `admin` / `admin` (demo only). If the Superset hostname/port differs, set `SUPERSET_URL` and `SUPERSET_PUBLIC_URL` in `.env`.
+
 ## 4. Connect Superset to PostgreSQL
 
 In Superset:
@@ -82,7 +90,11 @@ Create dataset:
 
 `public.claims`
 
-After the first upload or seed, open the dataset -> `Sync columns from source` so `company_id` appears, then add a native dashboard filter on `company_id` to view individual companies.
+With auto-provisioning this is done for you — the dashboard above is created automatically on first upload. If you want the charts described below only, disable nothing; they already exist once provisioned. Manual setup notes (used only if you disable provisioning):
+
+1. Settings -> Data -> Database Connections -> + Database -> SQLAlchemy URI: `postgresql://postgres:postgres@postgres:5432/pbm`
+2. Settings -> Data -> Datasets -> + Dataset -> table `public.claims`
+3. Build charts and a dashboard; add a native filter on `company_id`.
 
 Recommended charts:
 

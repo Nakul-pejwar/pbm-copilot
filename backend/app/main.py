@@ -2,16 +2,29 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from contextlib import asynccontextmanager
 from sqlalchemy import text
 from .db import engine, fetch_one, fetch_all, ensure_schema
 from .seed import run as seed
 from .config import settings
 from .upload import upload as process_upload
 
+
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        from .superset_client import ensure_dashboard
+        ensure_dashboard()
+    except Exception as e:
+        print(f"Superset self-heal skipped: {e}")
+    yield
+
+
 app=FastAPI(
     title="PBM Claims Anomaly & Compliance Copilot",
     version="1.0.0",
-    description="Synthetic PBM claims anomaly detection, risk scoring and explainability API."
+    description="Synthetic PBM claims anomaly detection, risk scoring and explainability API.",
+    lifespan=lifespan,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -43,14 +56,30 @@ async def api_upload(file: UploadFile = File(...), company_name: str = Form(...)
         raise HTTPException(400, str(e))
     return {"status":"ok", **result}
 
+@app.post("/api/provision")
+def provision():
+    from .superset_client import dashboard_url
+    try:
+        url = dashboard_url()
+        return {"status": "ok", "dashboard_url": url}
+    except Exception as e:
+        raise HTTPException(502, f"Superset provisioning failed: {e}")
+
 @app.get("/api/companies")
 def companies():
     ensure_schema()
-    return fetch_all("""
+    rows = fetch_all("""
         select company_id, name, uploaded_at, record_count, status
         from companies
         order by uploaded_at desc
     """)
+    for row in rows:
+        try:
+            from .superset_client import dashboard_url
+            row["dashboard_url"] = dashboard_url(row["company_id"])
+        except Exception:
+            row["dashboard_url"] = None
+    return rows
 
 @app.get("/metrics")
 def metrics():

@@ -33,6 +33,8 @@ services:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/pbm
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
+      SUPERSET_URL: ${SUPERSET_URL:-http://superset:8088}
+      SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8088}
     ports:
       - "8000:8000"
     depends_on:
