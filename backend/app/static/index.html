@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PBM Claims Upload</title>
+<style>
+  :root { --accent:#2d6cdf; --bg:#0f1420; --card:#1a2233; --text:#e8edf6; --muted:#93a1b8; --ok:#2ecc71; --err:#e74c3c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:48px 16px; }
+  h1 { font-size:24px; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:14px; margin-bottom:28px; }
+  .card { background:var(--card); border:1px solid #2a3650; border-radius:12px; padding:24px; width:100%; max-width:640px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input[type=text], input[type=file] { width:100%; padding:10px 12px; border-radius:8px; border:1px solid #33415e; background:#121a2b; color:var(--text); font-size:14px; margin-bottom:18px; }
+  input[type=file] { padding:8px; }
+  button { width:100%; padding:12px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .hint { font-size:12px; color:var(--muted); margin-top:14px; line-height:1.6; }
+  .hint code { background:#121a2b; padding:2px 6px; border-radius:4px; color:#9db8e8; }
+  #result { display:none; margin-top:20px; }
+  #result.show { display:block; }
+  .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:14px; }
+  .metric { background:#121a2b; border:1px solid #2a3650; border-radius:8px; padding:14px; text-align:center; }
+  .metric .num { font-size:22px; font-weight:700; }
+  .metric .lbl { font-size:12px; color:var(--muted); margin-top:4px; }
+  .badge { display:inline-block; padding:3px 8px; border-radius:6px; font-size:12px; margin:2px; }
+  .badge.CRITICAL { background:#7a1f1f; } .badge.HIGH { background:#8a4b0a; }
+  .badge.MEDIUM { background:#7a6a0a; } .badge.LOW { background:#1f5e3a; }
+  #error { display:none; margin-top:16px; padding:12px; border-radius:8px; background:#2b1215; border:1px solid #5e2530; color:#ff9d9d; font-size:13px; white-space:pre-wrap; }
+  #error.show { display:block; }
+  #history { margin-top:20px; }
+  #history h2 { font-size:15px; margin-bottom:10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #2a3650; }
+  th { color:var(--muted); font-weight:600; }
+  #progress { display:none; margin-top:16px; color:var(--muted); font-size:14px; text-align:center; }
+  #progress.show { display:block; }
+</style>
+</head>
+<body>
+  <h1>PBM Claims Anomaly &amp; Compliance Copilot</h1>
+  <div class="sub">Upload company claim data (CSV or Excel) to score it and push it to the Superset dashboard.</div>
+
+  <div class="card">
+    <label for="company">Company name</label>
+    <input type="text" id="company" placeholder="e.g. Acme Pharma">
+    <label for="file">Claim data file (.csv, .xlsx)</label>
+    <input type="file" id="file" accept=".csv,.xlsx,.xls">
+    <button id="uploadBtn" onclick="doUpload()">Upload &amp; Process</button>
+    <div class="hint">
+      Expected columns (exact): <code>claim_id</code>, <code>claim_date</code>, <code>member_id</code>,
+      <code>provider_id</code>, <code>plan_id</code>, <code>product_id</code>, <code>quantity</code>,
+      <code>days_supply</code>, <code>unit_price</code>, <code>allowed_unit_price</code>,
+      <code>paid_amount</code>, <code>allowed_amount</code>, <code>provider_claim_count_30d</code>,
+      <code>is_duplicate</code>, <code>refill_too_soon</code>, <code>ndc_mismatch</code>, <code>status</code>.
+      Re-uploading the same company replaces its previous data.
+    </div>
+  </div>
+
+  <div id="error"></div>
+  <div id="progress">Processing... training per-company anomaly model and scoring claims. This can take a minute for large files.</div>
+
+  <div id="result" class="card">
+    <h2>Upload result</h2>
+    <div class="summary" id="summary"></div>
+    <div id="riskDist" style="margin-top:12px;"></div>
+  </div>
+
+  <div id="history" class="card">
+    <h2>Upload history</h2>
+    <table id="historyTable">
+      <thead><tr><th>Company</th><th>Rows</th><th>Uploaded</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/companies');
+    if (!r.ok) return;
+    const rows = await r.json();
+    const tb = document.querySelector('#historyTable tbody');
+    tb.innerHTML = '';
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(row.company_id)}</td><td>${row.record_count}</td>
+        <td>${escapeHtml(String(row.uploaded_at))}</td><td>${escapeHtml(row.status)}</td>`;
+      tb.appendChild(tr);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function doUpload() {
+  const company = document.getElementById('company').value.trim();
+  const file = document.getElementById('file').files[0];
+  const btn = document.getElementById('uploadBtn');
+  const err = document.getElementById('error');
+  err.className = '';
+  err.textContent = '';
+  if (!company) { showError('Please enter a company name.'); return; }
+  if (!file) { showError('Please choose a file.'); return; }
+
+  const fd = new FormData();
+  fd.append('company_name', company);
+  fd.append('file', file);
+
+  btn.disabled = true;
+  document.getElementById('progress').className = 'show';
+  document.getElementById('result').className = '';
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { showError(data.detail || 'Upload failed.'); return; }
+    showResult(data);
+    loadHistory();
+  } catch (e) {
+    showError('Network error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    document.getElementById('progress').className = '';
+  }
+}
+
+function showError(msg) {
+  const err = document.getElementById('error');
+  err.textContent = msg;
+  err.className = 'show';
+  document.getElementById('result').className = '';
+}
+
+function showResult(data) {
+  const s = document.getElementById('summary');
+  s.innerHTML = `
+    <div class="metric"><div class="num">${data.rows_loaded.toLocaleString()}</div><div class="lbl">Rows loaded</div></div>
+    <div class="metric"><div class="num">${data.anomalies.toLocaleString()}</div><div class="lbl">Anomalies</div></div>
+    <div class="metric"><div class="num">${escapeHtml(data.company_id)}</div><div class="lbl">Company</div></div>`;
+  const d = document.getElementById('riskDist');
+  d.innerHTML = '<b style="font-size:13px;color:#93a1b8">Risk distribution:</b><br>';
+  for (const [level, count] of Object.entries(data.risk_levels)) {
+    d.innerHTML += `<span class="badge ${escapeHtml(level)}">${escapeHtml(level)}: ${count.toLocaleString()}</span> `;
+  }
+  document.getElementById('result').className = 'show';
+}
+
+loadHistory();
+</script>
+</body>
+</html>
