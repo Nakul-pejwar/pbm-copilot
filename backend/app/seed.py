@@ -3,9 +3,8 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 from faker import Faker
-from sqlalchemy import create_engine, text
-from .config import settings
-from .db import ensure_schema
+from sqlalchemy import text
+from .db import engine, ensure_schema
 from .rules import evaluate
 from .anomaly import fit_model, score_model
 from .scoring import final_score
@@ -57,8 +56,6 @@ def generate(n=100_000):
     return pd.DataFrame(rows)
 
 def run():
-    engine = create_engine(settings.database_url)
-
     ensure_schema()
 
     with engine.begin() as conn:

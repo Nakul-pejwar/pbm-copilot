@@ -2,9 +2,8 @@ import io
 import logging
 import re
 import pandas as pd
-from sqlalchemy import create_engine, text
-from .config import settings
-from .db import ensure_schema
+from sqlalchemy import text
+from .db import engine, ensure_schema
 from .rules import evaluate
 from .anomaly import fit_model, score_model
 from .scoring import final_score
@@ -50,9 +49,13 @@ def _to_bool(series, name):
     def parse(v):
         if isinstance(v, bool):
             return v
-        return str(v).strip().lower() in ("1", "true", "yes", "y")
-    out = series.map(parse).astype(bool)
-    return out
+        s = str(v).strip().lower()
+        if s in ("1", "true", "yes", "y"):
+            return True
+        if s in ("0", "false", "no", "n"):
+            return False
+        raise ValueError(f"Column '{name}' contains a non-boolean value: {v!r}")
+    return series.map(parse).astype(bool)
 
 
 def read_table(raw, filename):
@@ -109,6 +112,22 @@ def validate(df):
     return clean
 
 
+def derive_flags(df):
+    dup = df.duplicated(
+        subset=["member_id", "provider_id", "product_id", "claim_date"],
+        keep=False,
+    )
+    df["is_duplicate"] = df["is_duplicate"] | dup
+
+    s = df.sort_values(["member_id", "product_id", "claim_date"])
+    g = s.groupby(["member_id", "product_id"], sort=False)
+    gap = (s["claim_date"] - g["claim_date"].shift(1)).dt.days
+    prev_days = g["days_supply"].shift(1)
+    too_soon = (gap < (prev_days * 0.7)) & prev_days.notna()
+    df["refill_too_soon"] = df["refill_too_soon"] | too_soon.sort_index()
+    return df
+
+
 def process(df):
     model, scaler = fit_model(df)
     ml_scores, ml_flags = score_model(model, scaler, df)
@@ -139,12 +158,12 @@ def upload(raw, filename, company_name):
 
     df = read_table(raw, filename)
     df = validate(df)
+    df = derive_flags(df)
     df = process(df)
 
     df["company_id"] = company_id
     df["claim_date"] = df["claim_date"].dt.date
 
-    engine = create_engine(settings.database_url)
     ensure_schema()
 
     with engine.begin() as conn:

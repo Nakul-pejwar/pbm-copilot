@@ -35,10 +35,14 @@ services:
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
       SUPERSET_URL: ${SUPERSET_URL:-http://superset:8088}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8088}
+      SUPERSET_ORIGIN: ${SUPERSET_ORIGIN:-http://localhost:8088}
+      PBM_API_TOKEN: ${PBM_API_TOKEN:-}
     ports:
       - "8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      superset:
         condition: service_healthy
 
   superset:
@@ -49,7 +53,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-change-this-demo-secret-key}
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-pbm-demo-change-me}
       DATABASE_DB: pbm
       DATABASE_HOST: postgres
       DATABASE_USER: postgres
@@ -57,6 +61,7 @@ services:
       DATABASE_PORT: "5432"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      TALISMAN_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

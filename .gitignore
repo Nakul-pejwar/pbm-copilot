@@ -4,3 +4,9 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+backend/.pytest_cache/
+extensions/pbm-copilot/frontend/node_modules/
+extensions/pbm-copilot/frontend/dist/
+extensions/*.supx
+screenshot/
+issue.md

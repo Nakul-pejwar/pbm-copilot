@@ -9,15 +9,16 @@ FEATURES = [
 
 def fit_model(df):
     X = df[FEATURES].astype(float).fillna(0)
-    X = StandardScaler().fit_transform(X)
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(X)
     model = IsolationForest(
         n_estimators=150,
         contamination=0.03,
         random_state=42,
         n_jobs=-1
     )
-    model.fit(X)
-    return model, StandardScaler().fit(df[FEATURES].astype(float).fillna(0))
+    model.fit(Xs)
+    return model, scaler
 
 def score_model(model, scaler, df):
     X = scaler.transform(df[FEATURES].astype(float).fillna(0))

@@ -70,7 +70,7 @@
     <h2>Upload result</h2>
     <div class="summary" id="summary"></div>
     <div id="riskDist" style="margin-top:12px;"></div>
-    <button id="dashboardBtn" onclick="window.open(document.getElementById('dashboardBtn').dataset.url,'_blank')">Open your dashboard in Superset &rarr;</button>
+    <button id="dashboardBtn" onclick="openDashboard()">Open your dashboard in Superset &rarr;</button>
   </div>
 
   <div id="history" class="card">
@@ -158,11 +158,37 @@ function showResult(data) {
   const btn = document.getElementById('dashboardBtn');
   if (data.dashboard_url) {
     btn.dataset.url = data.dashboard_url;
-    btn.className = 'show';
+    btn.textContent = 'Open your dashboard in Superset \u2192';
   } else {
-    btn.className = '';
+    btn.dataset.url = '';
+    btn.textContent = 'Dashboard provisioning pending \u2014 click to retry';
   }
+  btn.className = 'show';
   document.getElementById('result').className = 'show';
+}
+
+async function openDashboard() {
+  const btn = document.getElementById('dashboardBtn');
+  let url = btn.dataset.url;
+  if (!url) {
+    btn.disabled = true;
+    btn.textContent = 'Provisioning dashboard...';
+    try {
+      const r = await fetch('/api/provision', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok || !data.dashboard_url) throw new Error(data.detail || 'provisioning failed');
+      url = data.dashboard_url;
+      btn.dataset.url = url;
+    } catch (e) {
+      showError('Dashboard provisioning failed: ' + e.message + '. Make sure Superset is running, then click retry.');
+      btn.disabled = false;
+      btn.textContent = 'Retry provisioning';
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Open your dashboard in Superset \u2192';
+  }
+  window.open(url, '_blank');
 }
 
 loadHistory();

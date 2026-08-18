@@ -72,6 +72,37 @@ The upload response and the upload UI include an **"Open your dashboard"** link 
 
 Superset login remains `admin` / `admin` (demo only). If the Superset hostname/port differs, set `SUPERSET_URL` and `SUPERSET_PUBLIC_URL` in `.env`.
 
+## 3b. Install the PBM Copilot Superset extension
+
+The API has an official Superset extension (`.supx`, loaded at runtime — no image rebuild). It adds a **PBM Copilot** panel to SQL Lab with an Upload / Companies / Anomalies / Explain / Settings UI that talks directly to the API.
+
+The stack already enables extensions and mounts `./extensions` into the Superset container, so installation is just dropping the bundle in place:
+
+1. `extensions/pbm.pbm-copilot-0.1.0.supx` is already in the repo and mounted into the container — just restart Superset once:
+
+   ```bash
+   docker compose restart superset
+   ```
+
+2. Open Superset (http://localhost:8088) → SQL Lab → the **PBM Copilot** panel (bottom tabs).
+
+3. In the panel's **Settings** tab, set the API base URL (`http://localhost:8000`) — done by default — and, if you set `PBM_API_TOKEN` in `.env`, the token. Click **Test connection**.
+
+Rebuilding the extension from source (needs Node.js 20+):
+
+```bash
+cd extensions/pbm-copilot/frontend
+npm install
+node bundle.mjs            # -> ../pbm.pbm-copilot-<version>.supx
+docker compose restart superset
+```
+
+The bundle contains only frontend code; it registers a view at the `sqllab.panels` contribution point (the only view area Superset 6.1 exposes) and calls the API from the browser, so `SUPERSET_ORIGIN` in `.env` must include the Superset origin for CORS (default `http://localhost:8088`).
+
+### API auth (optional)
+
+Set `PBM_API_TOKEN` in `.env` to require an `X-API-Token` header on write/explain endpoints (`POST /api/upload`, `POST /api/provision`, `POST /seed`, `POST /explain/{id}`). Read endpoints (`/metrics`, `/anomalies`, `/api/companies`, `/api/config`) stay open for the demo. Configure the token in the extension's Settings tab (stored in your browser only).
+
 ## 4. Connect Superset to PostgreSQL
 
 In Superset:

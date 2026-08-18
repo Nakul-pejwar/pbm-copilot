@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import logging
@@ -105,6 +106,35 @@ CHART_SPECS = [
             "time_range": "No filter",
         },
     },
+    {
+        "name": "Claim AI Explain",
+        "viz_type": "handlebars",
+        "params": {
+            "columns": ["claim_id", "company_id"],
+            "metrics": [],
+            "order_by_cols": ['["risk_score", false]'],
+            "row_limit": 1,
+            "granularity_sqla": "claim_date",
+            "time_range": "No filter",
+            "handlebars_template": (
+                '{{#if data.length}}'
+                '<div class="ai-wrap">'
+                '<iframe class="ai-frame" '
+                'src="http://localhost:8000/explain/view/{{data.0.claim_id}}?company_id={{data.0.company_id}}" '
+                'title="AI explanation for claim {{data.0.claim_id}}"></iframe>'
+                '</div>'
+                '{{else}}'
+                '<p class="ai-hint">Select a claim in Top Risk Claims to see its AI explanation.</p>'
+                '{{/if}}'
+            ),
+            "style_template": (
+                ".ai-wrap{width:100%;height:100%;min-height:320px}"
+                ".ai-frame{width:100%;height:100%;min-height:320px;border:none;"
+                "border-radius:8px;background:#0f1420}"
+                ".ai-hint{color:#93a1b8;font-size:13px;padding:12px}"
+            ),
+        },
+    },
 ]
 
 
@@ -115,6 +145,7 @@ class SupersetClient:
         self.token = None
         self.csrf = None
         self._dashboard_id = None
+        self._dashboard_ready = False
         self._client = httpx.Client(
             base_url=self.base,
             timeout=90,
@@ -146,6 +177,11 @@ class SupersetClient:
                 return r.json()
             except httpx.HTTPStatusError as e:
                 last = e
+                if e.response.status_code == 401:
+                    self.token = None
+                    self.csrf = None
+                    self.login()
+                    continue
                 time.sleep(2)
         raise last
 
@@ -163,6 +199,11 @@ class SupersetClient:
                 return r.content
             except httpx.HTTPStatusError as e:
                 last = e
+                if e.response.status_code == 401:
+                    self.token = None
+                    self.csrf = None
+                    self.login()
+                    continue
                 time.sleep(2)
         raise last
 
@@ -217,6 +258,7 @@ class SupersetClient:
     def ensure_charts(self, ds_id):
         existing = {c.get("slice_name"): c for c in self._list("chart/")}
         ids = []
+        changed = False
         for spec in CHART_SPECS:
             name = spec["name"]
             params = dict(spec["params"])
@@ -232,6 +274,7 @@ class SupersetClient:
                             "datasource_type": "table",
                             "params": json.dumps(params),
                         })
+                        changed = True
                         log.info("updated chart %s (%s)", name, chart["id"])
                     except Exception as e:
                         log.warning("failed to update chart %s: %s", name, e)
@@ -246,10 +289,11 @@ class SupersetClient:
                     "params": json.dumps(params),
                 })
                 ids.append(r["id"])
+                changed = True
                 log.info("created chart %s (%s)", name, r["id"])
             except Exception as e:
                 log.warning("failed to create chart %s: %s", name, e)
-        return ids
+        return ids, changed
 
     @staticmethod
     def _chart_params_differ(chart, expected_params, expected_viz_type):
@@ -264,23 +308,33 @@ class SupersetClient:
                 return True
         return False
 
-    def ensure_dashboard(self, ds_id, chart_ids):
+    def ensure_dashboard(self, ds_id, chart_ids, sig, force=False):
+        if self._dashboard_id is not None and self._dashboard_ready and not force:
+            return self._dashboard_id
+
         dashboard = None
         for d in self._list("dashboard/"):
             if d.get("dashboard_title") == DASHBOARD_TITLE:
                 dashboard = d
                 break
 
+        if dashboard and not force and dashboard.get("slug") == f"{DASHBOARD_SLUG}-{sig}":
+            self._dashboard_id = dashboard["id"]
+            self._dashboard_ready = True
+            log.info("dashboard up to date (id=%s)", self._dashboard_id)
+            return self._dashboard_id
+
         dash_uuid = None
         if dashboard:
             detail = self._request("GET", f"dashboard/{dashboard['id']}").get("result", {})
             dash_uuid = detail.get("uuid")
 
-        self._dashboard_id = self._import_dashboard(ds_id, chart_ids, dash_uuid)
+        self._dashboard_id = self._import_dashboard(ds_id, chart_ids, dash_uuid, sig)
+        self._dashboard_ready = True
         log.info("dashboard ready (id=%s)", self._dashboard_id)
         return self._dashboard_id
 
-    def _import_dashboard(self, ds_id, chart_ids, dash_uuid):
+    def _import_dashboard(self, ds_id, chart_ids, dash_uuid, sig):
         """Create/update the dashboard via Superset's v1 assets import.
 
         POST /api/v1/dashboard/ only writes the dashboard row; it never fills
@@ -326,7 +380,7 @@ class SupersetClient:
         metadata = self._build_metadata(ds_id, dataset_uuid)
         dash_cfg = {
             "dashboard_title": DASHBOARD_TITLE,
-            "slug": DASHBOARD_SLUG,
+            "slug": f"{DASHBOARD_SLUG}-{sig}",
             "uuid": dash_uuid or str(uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, DASHBOARD_TITLE)),
             "position": position,
             "metadata": metadata,
@@ -394,7 +448,7 @@ class SupersetClient:
                 "meta": meta,
             }
 
-        rows = [ids[0:2], ids[2:4], ids[4:5], ids[5:6]]
+        rows = [ids[0:2], ids[2:4], ids[4:5], ids[5:7]]
         for ri, chunk in enumerate(rows):
             if not chunk:
                 continue
@@ -450,6 +504,17 @@ class SupersetClient:
 _client = None
 
 
+def _spec_signature():
+    spec = json.dumps({
+        "filter": {"id": FILTER_ID, "column": FILTER_COLUMN},
+        "charts": [
+            {"name": s["name"], "viz_type": s["viz_type"], "params": s["params"]}
+            for s in CHART_SPECS
+        ],
+    }, sort_keys=True, default=str)
+    return hashlib.sha256(spec.encode()).hexdigest()[:12]
+
+
 def get_client():
     global _client
     if _client is None:
@@ -457,14 +522,30 @@ def get_client():
     return _client
 
 
+PROVISION_ATTEMPTS = 12
+PROVISION_BACKOFF = 10
+
+
 def ensure_dashboard():
     client = get_client()
-    client.login()
-    db_id = client.ensure_database()
-    ds_id = client.ensure_dataset(db_id)
-    chart_ids = client.ensure_charts(ds_id)
-    client.ensure_dashboard(ds_id, chart_ids)
-    return client
+    if client._dashboard_id is not None and client._dashboard_ready:
+        return client
+    last = None
+    for attempt in range(PROVISION_ATTEMPTS):
+        try:
+            client.login()
+            db_id = client.ensure_database()
+            ds_id = client.ensure_dataset(db_id)
+            chart_ids, changed = client.ensure_charts(ds_id)
+            client.ensure_dashboard(ds_id, chart_ids, _spec_signature(), force=changed)
+            return client
+        except Exception as e:
+            last = e
+            log.warning("Superset provisioning attempt %s/%s failed: %s",
+                        attempt + 1, PROVISION_ATTEMPTS, e)
+            if attempt < PROVISION_ATTEMPTS - 1:
+                time.sleep(PROVISION_BACKOFF)
+    raise last
 
 
 def dashboard_url(company_id=None):

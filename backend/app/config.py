@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     superset_public_url: str = "http://localhost:8088"
     superset_username: str = "admin"
     superset_password: str = "admin"
+    superset_origin: str = "http://localhost:8088"
+    api_token: str = ""
 
     class Config:
         env_file = ".env"
