@@ -120,13 +120,13 @@ CHART_SPECS = [
                 '{{#if data.length}}'
                 '<div class="ai-wrap">'
                 '<iframe class="ai-frame" '
-                'src="http://localhost:8000/explain/view/{{data.0.claim_id}}?company_id={{data.0.company_id}}" '
+                'src="%s/explain/view/{{data.0.claim_id}}?company_id={{data.0.company_id}}" '
                 'title="AI explanation for claim {{data.0.claim_id}}"></iframe>'
                 '</div>'
                 '{{else}}'
                 '<p class="ai-hint">Select a claim in Top Risk Claims to see its AI explanation.</p>'
                 '{{/if}}'
-            ),
+            ) % settings.api_public_url.rstrip("/"),
             "style_template": (
                 ".ai-wrap{width:100%;height:100%;min-height:320px}"
                 ".ai-frame{width:100%;height:100%;min-height:320px;border:none;"

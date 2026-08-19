@@ -76,10 +76,10 @@ After upload, use the **"Open your dashboard"** link from the UI — it opens th
 
 ## 6. Use the PBM Copilot extension inside Superset
 
-The stack ships with a Superset extension (`extensions/pbm.pbm-copilot-0.1.0.supx`) that puts a **PBM Copilot** panel in SQL Lab: upload claim files, browse companies and anomalies, and get GenAI explanations without leaving Superset.
+The stack ships with a Superset extension (`superset/extensions/pbm.pbm-copilot-*.supx`) that puts a **PBM Copilot** panel in SQL Lab: upload claim files, browse companies and anomalies, and get GenAI explanations without leaving Superset. It is baked into the Superset image, so it's already active after `docker compose up -d --build`:
 
 ```bash
-docker compose restart superset   # loads the .supx from ./extensions (mounted)
+docker compose up -d --build   # image already contains the extension
 ```
 
 Then in Superset: **SQL Lab** → **PBM Copilot** tab. First time, open the **Settings** tab, set the API base URL (`http://localhost:8000`), add the API token if you configured `PBM_API_TOKEN`, and **Test connection**.
@@ -89,9 +89,14 @@ Rebuild the bundle from source (Node.js 20+):
 ```bash
 cd extensions/pbm-copilot/frontend
 npm install
-node bundle.mjs
-docker compose restart superset
+node bundle.mjs                       # -> ../../pbm.pbm-copilot-<version>.<ts>.supx
+Copy-Item ../pbm.pbm-copilot-*.supx ../../superset/extensions/   # PowerShell
+# macOS/Linux: cp ../pbm.pbm-copilot-*.supx ../../superset/extensions/
+docker compose build superset
+docker compose up -d superset
 ```
+
+> There is no volume mount for the extension — the Superset image copies `superset/extensions/*.supx` at build time, so a rebuilt bundle needs `docker compose build superset` (a plain `restart` will not pick it up).
 
 ## 7. Explain an anomaly
 

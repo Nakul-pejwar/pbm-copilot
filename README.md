@@ -48,8 +48,8 @@ Invoke-RestMethod http://localhost:8000/metrics
 No sample file handy? Generate one from the project root (pure stdlib, no installs):
 
 ```bash
-python make_sample_csv.py --rows 5000          # -> sample_claims.csv
-python make_sample_csv.py --rows 5000 --seed 7 # different dataset
+python script/make_sample_csv.py --rows 5000          # -> sample_claims.csv
+python script/make_sample_csv.py --rows 5000 --seed 7 # different dataset
 ```
 
 Output has the exact 17 required columns and ~4.5% injected anomalies.
@@ -74,30 +74,35 @@ Superset login remains `admin` / `admin` (demo only). If the Superset hostname/p
 
 ## 3b. Install the PBM Copilot Superset extension
 
-The API has an official Superset extension (`.supx`, loaded at runtime — no image rebuild). It adds a **PBM Copilot** panel to SQL Lab with an Upload / Companies / Anomalies / Explain / Settings UI that talks directly to the API.
+The repo ships a packaged Superset extension (`.supx`) that adds a **PBM Copilot** panel to SQL Lab with an Upload / Companies / Anomalies / Explain / Settings UI that talks directly to the API. The extension is loaded by Superset at runtime from `/app/extensions` — the Superset image already has it baked in, so it works out of the box:
 
-The stack already enables extensions and mounts `./extensions` into the Superset container, so installation is just dropping the bundle in place:
+```bash
+docker compose up -d --build   # first start: image already contains the .supx
+```
 
-1. `extensions/pbm.pbm-copilot-0.1.0.supx` is already in the repo and mounted into the container — just restart Superset once:
+> Note: the `superset` service has no volume mount for `./extensions` — the bundle is copied into the image at build time (`superset/Dockerfile` copies `superset/extensions/*.supx`). To deploy a rebuilt bundle you must **rebuild the image**, not just restart the container (see below).
 
-   ```bash
-   docker compose restart superset
-   ```
+1. Open Superset (http://localhost:8088) → SQL Lab → the **PBM Copilot** panel (bottom tabs).
 
-2. Open Superset (http://localhost:8088) → SQL Lab → the **PBM Copilot** panel (bottom tabs).
-
-3. In the panel's **Settings** tab, set the API base URL (`http://localhost:8000`) — done by default — and, if you set `PBM_API_TOKEN` in `.env`, the token. Click **Test connection**.
+2. In the panel's **Settings** tab, set the API base URL (`http://localhost:8000`) — done by default — and, if you set `PBM_API_TOKEN` in `.env`, the token. Click **Test connection**.
 
 Rebuilding the extension from source (needs Node.js 20+):
 
 ```bash
 cd extensions/pbm-copilot/frontend
 npm install
-node bundle.mjs            # -> ../pbm.pbm-copilot-<version>.supx
-docker compose restart superset
+node bundle.mjs            # -> ../../pbm.pbm-copilot-<version>.<ts>.supx
+Copy-Item ../pbm.pbm-copilot-*.supx ../../superset/extensions/   # PowerShell
+# macOS/Linux: cp ../pbm.pbm-copilot-*.supx ../../superset/extensions/
+docker compose build superset
+docker compose up -d superset
 ```
 
+> `bundle.mjs` writes the new `.supx` into `extensions/` (repo root). The Superset image is built from the `superset/` context, so copy the bundle into `superset/extensions/` first. If a previous build left a stale `remoteEntry.*.js` in `dist/`, remove `dist/` before rebuilding.
+
 The bundle contains only frontend code; it registers a view at the `sqllab.panels` contribution point (the only view area Superset 6.1 exposes) and calls the API from the browser, so `SUPERSET_ORIGIN` in `.env` must include the Superset origin for CORS (default `http://localhost:8088`).
+
+The dashboard's "Claim AI Explain" iframe chart embeds the API's explain page; its URL comes from `PBM_API_PUBLIC_URL` in `.env` (default `http://localhost:8000`). It must be reachable from the user's browser and should match the API base URL set in the extension's Settings tab. Changing it re-provisions the dashboard automatically.
 
 ### API auth (optional)
 

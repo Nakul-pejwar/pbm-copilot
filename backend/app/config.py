@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     superset_username: str = "admin"
     superset_password: str = "admin"
     superset_origin: str = "http://localhost:8088"
+    api_public_url: str = "http://localhost:8000"
     api_token: str = ""
 
     class Config:
