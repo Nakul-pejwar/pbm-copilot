@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import time
 import uuid as uuid_lib
 import zipfile
@@ -16,8 +17,35 @@ log = logging.getLogger("superset")
 DASHBOARD_TITLE = "PBM Claims Risk & Compliance Command Center"
 DASHBOARD_SLUG = "pbm-claims-command-center"
 
-FILTER_ID = "c0ffee00-0000-4000-8000-000000000001"
+FILTER_ID = "NATIVE_FILTER-c0ffee00-0000-4000-8000-000000000001"
 FILTER_COLUMN = "company_id"
+
+_RISON_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _rison_encode(value):
+    if value is None:
+        return "null"
+    if value is True:
+        return "!t"
+    if value is False:
+        return "!f"
+    if isinstance(value, str):
+        escaped = value.replace("!", "!!").replace("'", "!'")
+        return f"'{escaped}'"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "!(" + ",".join(_rison_encode(v) for v in value) + ")"
+    if isinstance(value, dict):
+        pairs = []
+        for key, item in value.items():
+            if isinstance(key, str) and _RISON_ID_RE.match(key):
+                pairs.append(f"{key}:{_rison_encode(item)}")
+            else:
+                pairs.append(f"{_rison_encode(key)}:{_rison_encode(item)}")
+        return "(" + ",".join(pairs) + ")"
+    raise TypeError(f"cannot rison-encode {type(value)}")
 
 
 def _metric(column, aggregate, label, coltype="VARCHAR"):
@@ -42,20 +70,18 @@ def _adhoc(column, comparator):
 CHART_SPECS = [
     {
         "name": "Total Claims",
-        "viz_type": "big_number",
+        "viz_type": "big_number_total",
         "params": {
             "metric": _metric("claim_id", "COUNT", "Claims"),
-            "granularity_sqla": "claim_date",
             "time_range": "No filter",
         },
     },
     {
         "name": "Anomalies",
-        "viz_type": "big_number",
+        "viz_type": "big_number_total",
         "params": {
             "metric": _metric("claim_id", "COUNT", "Anomalies"),
             "adhoc_filters": [_adhoc("anomaly", True)],
-            "granularity_sqla": "claim_date",
             "time_range": "No filter",
         },
     },
@@ -136,6 +162,10 @@ CHART_SPECS = [
         },
     },
 ]
+
+_CONTROLLED_PARAM_KEYS = {
+    k for s in CHART_SPECS for k in s["params"]
+} | {"datasource"}
 
 
 class SupersetClient:
@@ -303,10 +333,10 @@ class SupersetClient:
             current = json.loads(chart.get("params") or "{}")
         except (TypeError, ValueError):
             return True
-        for key, value in expected_params.items():
-            if current.get(key) != value:
-                return True
-        return False
+        return any(
+            current.get(k) != expected_params.get(k)
+            for k in _CONTROLLED_PARAM_KEYS
+        )
 
     def ensure_dashboard(self, ds_id, chart_ids, sig, force=False):
         if self._dashboard_id is not None and self._dashboard_ready and not force:
@@ -475,7 +505,8 @@ class SupersetClient:
                 {
                     "id": FILTER_ID,
                     "name": "Company",
-                    "filterType": "filter",
+                    "type": "NATIVE_FILTER",
+                    "filterType": "filter_select",
                     "targets": [target],
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
@@ -496,8 +527,18 @@ class SupersetClient:
             raise RuntimeError("Dashboard not provisioned.")
         url = f"{self.public}/superset/dashboard/{self._dashboard_id}/"
         if company_id:
-            url += ("?native_filters=(inclusive:!(1),"
-                    f"urlParams:!((filters:!((col:{FILTER_COLUMN},opr:IN,value:!({company_id}),gir:!())),scoping:!())))")
+            payload = {
+                FILTER_ID: {
+                    "id": FILTER_ID,
+                    "filterState": {"value": [company_id]},
+                    "extraFormData": {
+                        "filters": [{
+                            "col": FILTER_COLUMN, "op": "IN", "val": [company_id],
+                        }]
+                    },
+                }
+            }
+            url += "?native_filters=" + _rison_encode(payload)
         return url
 
 
