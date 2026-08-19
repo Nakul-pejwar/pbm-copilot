@@ -195,38 +195,3 @@ The dashboard's **Claim AI Explain** iframe chart embeds the API's explain page;
 ```bash
 docker compose exec api python -m pytest tests -q
 ```
-
----
-
-## Demo script / presentation story
-
-Don't say "AI detects fraud". Say:
-
-> "The system combines deterministic PBM business rules with an unsupervised baseline anomaly model. The result is a risk-ranked triage queue. GenAI sits after detection and explains the evidence for a human reviewer."
-
-Business value:
-
-- reduces manual first-pass review
-- prioritizes high-risk claims
-- makes anomaly evidence easier to understand
-- gives analysts a repeatable investigation path
-- preserves an audit trail through stored scores, rule codes, and evidence
-
----
-
-## Production evolution
-
-For production, add:
-
-- real PBM source adapters
-- PHI/PII controls and encryption
-- RBAC and SSO
-- immutable audit logging
-- model registry/versioning
-- feature store
-- drift monitoring
-- human approval workflow
-- rule versioning
-- data retention policies
-- automated model/rule validation
-- SIEM integration
