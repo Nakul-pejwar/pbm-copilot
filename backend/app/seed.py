@@ -1,3 +1,4 @@
+import json
 import os, random
 from datetime import date, timedelta
 import numpy as np
@@ -8,6 +9,7 @@ from .db import engine, ensure_schema
 from .rules import evaluate
 from .anomaly import fit_model, score_model
 from .scoring import final_score
+from .provider_score import compute_provider_scores
 
 fake = Faker()
 random.seed(42)
@@ -17,15 +19,25 @@ def generate(n=100_000):
     providers = [f"PRV{1000+i}" for i in range(250)]
     products = [f"{11+i:05d}-{i%10:02d}-{i%10:02d}" for i in range(100)]
     plans = [f"PLAN-{i:03d}" for i in range(20)]
+    profiles = {}
+    for p in providers:
+        r = random.random()
+        if r < 0.10:
+            profiles[p] = 0.50
+        elif r < 0.30:
+            profiles[p] = 0.08
+        else:
+            profiles[p] = 0.005
     rows=[]
     for i in range(n):
+        provider_id = random.choice(providers)
         qty = int(np.random.choice([30,60,90,120], p=[.45,.25,.20,.10]))
         days = int(np.random.choice([30,60,90,120], p=[.55,.20,.20,.05]))
         unit = round(float(np.random.lognormal(2.2, .65)),2)
         allowed_unit = round(unit * random.uniform(.80, 1.05),2)
         allowed = round(allowed_unit * qty,2)
         paid = round(allowed * random.uniform(.85,1.08),2)
-        anomaly = random.random() < .045
+        anomaly = random.random() < profiles[provider_id]
         if anomaly:
             kind=random.choice(["price","paid","qty","refill","mismatch","duplicate"])
             if kind=="price": unit=round(allowed_unit*random.uniform(1.3,2.5),2)
@@ -38,7 +50,7 @@ def generate(n=100_000):
             "company_id": "SEED_DEMO",
             "claim_date": date.today()-timedelta(days=random.randint(0,179)),
             "member_id": f"MBR-{random.randint(1,25000):06d}",
-            "provider_id": random.choice(providers),
+            "provider_id": provider_id,
             "plan_id": random.choice(plans),
             "product_id": random.choice(products),
             "quantity": qty,
@@ -55,17 +67,44 @@ def generate(n=100_000):
         })
     return pd.DataFrame(rows)
 
+def _insert_provider_scores(df, conn):
+    scores = compute_provider_scores(df)
+    scores["factors"] = scores["factors"].map(json.dumps)
+    scores["company_id"] = "SEED_DEMO"
+    scores.to_sql(
+        "provider_scores",
+        con=conn,
+        if_exists="append",
+        index=False,
+        chunksize=1000,
+    )
+
 def run():
     ensure_schema()
 
-    with engine.begin() as conn:
-
+    with engine.connect() as conn:
         count = conn.execute(
             text("SELECT count(*) FROM claims")
         ).scalar()
 
     if count:
-        print(f"Claims already exist: {count}. Skipping seed.")
+        with engine.connect() as conn:
+            existing = conn.execute(
+                text("SELECT count(*) FROM provider_scores WHERE company_id='SEED_DEMO'")
+            ).scalar()
+        if existing:
+            print("Claims already exist. Skipping seed.")
+            return
+        print("Claims already exist; computing ClaimTrust provider scores for SEED_DEMO...")
+        df = pd.read_sql(
+            "select provider_id, risk_score, risk_level, anomaly, "
+            "rule_codes, paid_amount, allowed_amount "
+            "from claims where company_id='SEED_DEMO'",
+            engine,
+        )
+        with engine.begin() as conn:
+            _insert_provider_scores(df, conn)
+        print("Seeded provider scores for existing claims.")
         return
 
     print("Generating 100,000 synthetic claims...")
@@ -115,6 +154,11 @@ def run():
         index=False,
         chunksize=1000
     )
+
+    print("Computing ClaimTrust provider scores...")
+
+    with engine.begin() as conn:
+        _insert_provider_scores(df, conn)
 
     print("Seeded 100,000 synthetic claims.")
 

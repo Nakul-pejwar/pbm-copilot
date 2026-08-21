@@ -29,6 +29,7 @@ flowchart LR
 
 - **Detection** – deterministic PBM business rules (duplicate claims, refill-too-soon, NDC mismatches) combined with a per-company **Isolation Forest** baseline.
 - **Triage** – every claim gets a risk score and risk level; high-risk claims form a prioritized review queue.
+- **ClaimTrust Score** – every provider gets a CIBIL-style 300–900 rating per company, so reviewers can see at a glance which providers are excellent, good, fair, or poor.
 - **Review** – a Superset dashboard (`PBM Claims Risk & Compliance Command Center`) is provisioned automatically and pre-filtered per company.
 - **Explain** – GenAI summarizes the evidence behind each anomaly for a human reviewer (deterministic fallback when no API key is set).
 
@@ -95,12 +96,27 @@ refill_too_soon, ndc_mismatch, status
 
 Re-uploading the same company replaces its existing data. Per-file errors are reported for missing columns, bad types, duplicate `claim_id`s, and size/row limits. Seed data is tagged `company_id = SEED_DEMO`.
 
+### ClaimTrust Score (provider rating)
+
+Every upload also computes a **ClaimTrust Score** per provider — a CIBIL-style 300–900 rating of provider trustworthiness, scoped to the company whose data was uploaded:
+
+| Score | Band |
+| ----- | -------- |
+| 750–900 | Excellent |
+| 650–749 | Good |
+| 550–649 | Fair |
+| 300–549 | Poor |
+
+The score is a transparent penalty model, not a black box: each provider starts at 900 and loses points for anomaly rate (≤250), CRITICAL/HIGH claim share (≤200), overpayments beyond the allowed amount (≤150), and average claim risk (≤100). Providers with fewer than 10 claims ("thin file") are capped at 650. The full penalty breakdown is stored alongside the score.
+
+Scores are recomputed on every re-upload and exposed via `GET /api/providers` plus the auto-provisioned **Provider Health (ClaimTrust)** dashboard chart (worst providers first). As with everything here: synthetic demo data, triage signal — not a real credit or compliance decision.
+
 ### Automatic Superset provisioning
 
 After every upload the API self-provisions Superset (idempotent, via the Superset REST API):
 
-- the `PBM Claims` database connection and the `claims` dataset,
-- 7 charts: Total Claims, Anomalies, Risk Level Distribution, Anomalies by Provider, Claims Trend by Risk Level, Top Risk Claims, and Claim AI Explain,
+- the `PBM Claims` database connection, the `claims` dataset and the `provider_scores` dataset,
+- 8 charts: Total Claims, Anomalies, Risk Level Distribution, Anomalies by Provider, Claims Trend by Risk Level, Top Risk Claims, Claim AI Explain, and Provider Health (ClaimTrust),
 - the dashboard **PBM Claims Risk & Compliance Command Center** with a `company_id` native filter.
 
 Each company's **"Open your dashboard"** link carries a rison-encoded filter state, e.g. `?native_filters=(NATIVE_FILTER-...:(filterState:...,extraFormData:...))`, so the dashboard opens pre-filtered to that company's data. `POST /api/provision` re-provisions manually; provisioning also self-heals at API startup.
@@ -152,6 +168,7 @@ The dashboard's **Claim AI Explain** iframe chart embeds the API's explain page;
 | POST   | `/api/provision`       | token | Re-provision the Superset dashboard          |
 | POST   | `/seed`                | token | Seed 100K synthetic demo claims              |
 | GET    | `/api/companies`       | –     | Upload history with per-company dashboard links |
+| GET    | `/api/providers`       | –     | ClaimTrust provider scores, worst first         |
 
 ¹ When `PBM_API_TOKEN` is set, endpoints marked **token** require an `X-API-Token` header. Read endpoints stay open for the demo; the extension stores the token in your browser only.
 

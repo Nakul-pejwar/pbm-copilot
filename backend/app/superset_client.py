@@ -161,6 +161,21 @@ CHART_SPECS = [
             ),
         },
     },
+    {
+        "name": "Provider Health (ClaimTrust)",
+        "dataset": "provider_scores",
+        "viz_type": "table",
+        "params": {
+            "columns": [
+                "provider_id", "claim_count", "score", "band",
+                "anomaly_rate", "avg_risk", "overpayment_total", "top_rule_codes",
+            ],
+            "metrics": [],
+            "order_by_cols": ['["score", true]'],
+            "row_limit": 50,
+            "time_range": "No filter",
+        },
+    },
 ]
 
 _CONTROLLED_PARAM_KEYS = {
@@ -274,23 +289,24 @@ class SupersetClient:
         })
         return r["id"]
 
-    def ensure_dataset(self, db_id):
+    def ensure_dataset(self, db_id, table_name):
         for ds in self._list("dataset/"):
-            if ds.get("table_name") == "claims" and ds.get("database", {}).get("id") == db_id:
+            if ds.get("table_name") == table_name and ds.get("database", {}).get("id") == db_id:
                 return ds["id"]
         r = self._request("POST", "dataset/", json={
             "database": db_id,
             "schema": "public",
-            "table_name": "claims",
+            "table_name": table_name,
         })
         return r["id"]
 
-    def ensure_charts(self, ds_id):
+    def ensure_charts(self, ds_ids):
         existing = {c.get("slice_name"): c for c in self._list("chart/")}
         ids = []
         changed = False
         for spec in CHART_SPECS:
             name = spec["name"]
+            ds_id = ds_ids[spec.get("dataset", "claims")]
             params = dict(spec["params"])
             params["datasource"] = f"{ds_id}__table"
             chart = existing.get(name)
@@ -338,7 +354,7 @@ class SupersetClient:
             for k in _CONTROLLED_PARAM_KEYS
         )
 
-    def ensure_dashboard(self, ds_id, chart_ids, sig, force=False):
+    def ensure_dashboard(self, ds_ids, chart_ids, sig, force=False):
         if self._dashboard_id is not None and self._dashboard_ready and not force:
             return self._dashboard_id
 
@@ -359,12 +375,12 @@ class SupersetClient:
             detail = self._request("GET", f"dashboard/{dashboard['id']}").get("result", {})
             dash_uuid = detail.get("uuid")
 
-        self._dashboard_id = self._import_dashboard(ds_id, chart_ids, dash_uuid, sig)
+        self._dashboard_id = self._import_dashboard(ds_ids, chart_ids, dash_uuid, sig)
         self._dashboard_ready = True
         log.info("dashboard ready (id=%s)", self._dashboard_id)
         return self._dashboard_id
 
-    def _import_dashboard(self, ds_id, chart_ids, dash_uuid, sig):
+    def _import_dashboard(self, ds_ids, chart_ids, dash_uuid, sig):
         """Create/update the dashboard via Superset's v1 assets import.
 
         POST /api/v1/dashboard/ only writes the dashboard row; it never fills
@@ -377,7 +393,7 @@ class SupersetClient:
         name_to_id = dict(zip([s["name"] for s in CHART_SPECS], chart_ids))
 
         chart_uuid_by_id = {}
-        dataset_uuid = None
+        dataset_uuids = {}
         chart_files = {}
         dataset_files = []
         database_files = []
@@ -401,13 +417,14 @@ class SupersetClient:
                 elif key.startswith("datasets/"):
                     dataset_files.append((key, content))
                     cfg = yaml.safe_load(content)
-                    if dataset_uuid is None:
-                        dataset_uuid = cfg.get("uuid")
+                    table_name = cfg.get("table_name")
+                    if table_name and table_name not in dataset_uuids:
+                        dataset_uuids[table_name] = cfg.get("uuid")
                 elif key.startswith("databases/"):
                     database_files.append((key, content))
 
         position = self._build_position(chart_ids, chart_uuid_by_id)
-        metadata = self._build_metadata(ds_id, dataset_uuid)
+        metadata = self._build_metadata(ds_ids, dataset_uuids)
         dash_cfg = {
             "dashboard_title": DASHBOARD_TITLE,
             "slug": f"{DASHBOARD_SLUG}-{sig}",
@@ -478,7 +495,7 @@ class SupersetClient:
                 "meta": meta,
             }
 
-        rows = [ids[0:2], ids[2:4], ids[4:5], ids[5:7]]
+        rows = [ids[0:2], ids[2:4], ids[4:6], ids[6:8]]
         for ri, chunk in enumerate(rows):
             if not chunk:
                 continue
@@ -494,12 +511,19 @@ class SupersetClient:
         return grid
 
     @staticmethod
-    def _build_metadata(ds_id=None, ds_uuid=None):
-        target = {"column": {"name": FILTER_COLUMN}}
-        if ds_uuid:
-            target["datasetUuid"] = ds_uuid
-        else:
-            target["datasetId"] = ds_id
+    def _build_metadata(ds_ids=None, dataset_uuids=None):
+        ds_ids = ds_ids or {}
+        dataset_uuids = dataset_uuids or {}
+        targets = []
+        for table in ("claims", "provider_scores"):
+            target = {"column": {"name": FILTER_COLUMN}}
+            if dataset_uuids.get(table):
+                target["datasetUuid"] = dataset_uuids[table]
+            elif ds_ids.get(table):
+                target["datasetId"] = ds_ids[table]
+            else:
+                continue
+            targets.append(target)
         return {
             "native_filter_configuration": [
                 {
@@ -507,7 +531,7 @@ class SupersetClient:
                     "name": "Company",
                     "type": "NATIVE_FILTER",
                     "filterType": "filter_select",
-                    "targets": [target],
+                    "targets": targets,
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
                     "controlValues": {},
@@ -549,7 +573,8 @@ def _spec_signature():
     spec = json.dumps({
         "filter": {"id": FILTER_ID, "column": FILTER_COLUMN},
         "charts": [
-            {"name": s["name"], "viz_type": s["viz_type"], "params": s["params"]}
+            {"name": s["name"], "viz_type": s["viz_type"],
+             "dataset": s.get("dataset", "claims"), "params": s["params"]}
             for s in CHART_SPECS
         ],
     }, sort_keys=True, default=str)
@@ -576,9 +601,12 @@ def ensure_dashboard():
         try:
             client.login()
             db_id = client.ensure_database()
-            ds_id = client.ensure_dataset(db_id)
-            chart_ids, changed = client.ensure_charts(ds_id)
-            client.ensure_dashboard(ds_id, chart_ids, _spec_signature(), force=changed)
+            ds_ids = {
+                "claims": client.ensure_dataset(db_id, "claims"),
+                "provider_scores": client.ensure_dataset(db_id, "provider_scores"),
+            }
+            chart_ids, changed = client.ensure_charts(ds_ids)
+            client.ensure_dashboard(ds_ids, chart_ids, _spec_signature(), force=changed)
             return client
         except Exception as e:
             last = e

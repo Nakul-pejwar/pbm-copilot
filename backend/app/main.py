@@ -107,6 +107,22 @@ def companies():
             row["dashboard_url"] = None
     return rows
 
+
+@app.get("/api/providers")
+def providers(company_id: str = None, band: str = None, limit: int = 100):
+    ensure_schema()
+    q = "select * from provider_scores where 1=1"
+    params = {}
+    if company_id:
+        q += " and company_id = :cid"
+        params["cid"] = company_id
+    if band:
+        q += " and band = :band"
+        params["band"] = band.strip().upper()
+    q += " order by score asc, provider_id asc limit :limit"
+    params["limit"] = min(limit, 500)
+    return fetch_all(q, params)
+
 @app.get("/metrics")
 def metrics():
     q="""

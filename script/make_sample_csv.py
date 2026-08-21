@@ -27,15 +27,25 @@ def generate(n, rng):
     providers = [f"PRV{1000 + i}" for i in range(250)]
     products = [f"{11 + i:05d}-{i % 10:02d}-{i % 10:02d}" for i in range(100)]
     plans = [f"PLAN-{i:03d}" for i in range(20)]
+    profiles = {}
+    for p in providers:
+        r = rng.random()
+        if r < 0.10:
+            profiles[p] = 0.50
+        elif r < 0.30:
+            profiles[p] = 0.08
+        else:
+            profiles[p] = 0.005
     rows = []
     for i in range(n):
+        provider_id = rng.choice(providers)
         qty = rng.choices([30, 60, 90, 120], weights=[.45, .25, .20, .10])[0]
         days = rng.choices([30, 60, 90, 120], weights=[.55, .20, .20, .05])[0]
         unit = round(math.exp(rng.gauss(2.2, .65)), 2)
         allowed_unit = round(unit * rng.uniform(.80, 1.05), 2)
         allowed = round(allowed_unit * qty, 2)
         paid = round(allowed * rng.uniform(.85, 1.08), 2)
-        anomaly = rng.random() < .045
+        anomaly = rng.random() < profiles[provider_id]
         is_dup = refill = mismatch = False
         if anomaly:
             kind = rng.choice(["price", "paid", "qty", "refill", "mismatch", "duplicate"])
@@ -55,7 +65,7 @@ def generate(n, rng):
             "claim_id": f"CLM-{i + 1:08d}",
             "claim_date": (date.today() - timedelta(days=rng.randint(0, 179))).isoformat(),
             "member_id": f"MBR-{rng.randint(1, 25000):06d}",
-            "provider_id": rng.choice(providers),
+            "provider_id": provider_id,
             "plan_id": rng.choice(plans),
             "product_id": rng.choice(products),
             "quantity": qty,

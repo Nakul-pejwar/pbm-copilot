@@ -35,7 +35,7 @@ This starts four services:
 | API + UI  | http://localhost:8000        | Upload UI                          |
 | API docs  | http://localhost:8000/docs   | Swagger UI                         |
 | Superset  | http://localhost:8088        | Login: `admin` / `admin`           |
-| PostgreSQL| localhost:5432               | `postgres` / `postgres`, db `pbm`  |
+| PostgreSQL| localhost:5433               | `postgres` / `postgres`, db `pbm`  |
 
 ## 3. Generate the 100K demo claims
 

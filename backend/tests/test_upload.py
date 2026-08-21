@@ -43,6 +43,7 @@ def _upload(company_name, rows):
 def _cleanup(company_id):
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM claims WHERE company_id=:c"), {"c": company_id})
+        conn.execute(text("DELETE FROM provider_scores WHERE company_id=:c"), {"c": company_id})
         conn.execute(text("DELETE FROM companies WHERE company_id=:c"), {"c": company_id})
 
 

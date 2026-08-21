@@ -39,7 +39,7 @@ This starts four services:
 | PBM API + upload UI | http://localhost:8000 | — |
 | API docs | http://localhost:8000/docs | — |
 | Superset (with the extension pre-installed) | http://localhost:8088 | `admin` / `admin` |
-| PostgreSQL | localhost:5432 | `postgres` / `postgres` |
+| PostgreSQL | localhost:5433 | `postgres` / `postgres` |
 
 The Superset image is built with the extension already copied in
 (`superset/extensions/*.supx`), so it just works. Open http://localhost:8088,

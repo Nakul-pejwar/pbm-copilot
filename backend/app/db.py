@@ -69,6 +69,26 @@ COMPANIES_TABLE = """
     )
 """
 
+PROVIDER_SCORES_TABLE = """
+    CREATE TABLE IF NOT EXISTS provider_scores (
+        company_id text not null,
+        provider_id text not null,
+        claim_count integer not null default 0,
+        anomaly_rate numeric(6,4) default 0,
+        avg_risk numeric(8,2) default 0,
+        critical_count integer default 0,
+        high_count integer default 0,
+        overpayment_total numeric(14,2) default 0,
+        top_rule_codes text default '',
+        score integer not null default 300,
+        band text not null default 'Poor',
+        sufficient_data boolean not null default false,
+        factors text default '',
+        updated_at timestamp not null default now(),
+        primary key (company_id, provider_id)
+    )
+"""
+
 MIGRATIONS = {
     1: [
         CLAIMS_TABLE,
@@ -76,6 +96,7 @@ MIGRATIONS = {
         LEGACY_PK_MIGRATION,
         COMPANIES_TABLE,
     ],
+    2: [PROVIDER_SCORES_TABLE],
 }
 
 

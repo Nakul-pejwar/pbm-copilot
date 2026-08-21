@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import re
 import pandas as pd
@@ -7,6 +8,7 @@ from .db import engine, ensure_schema
 from .rules import evaluate
 from .anomaly import fit_model, score_model
 from .scoring import final_score
+from .provider_score import compute_provider_scores
 
 log = logging.getLogger("upload")
 
@@ -164,6 +166,10 @@ def upload(raw, filename, company_name):
     df["company_id"] = company_id
     df["claim_date"] = df["claim_date"].dt.date
 
+    scores = compute_provider_scores(df)
+    scores["factors"] = scores["factors"].map(json.dumps)
+    scores["company_id"] = company_id
+
     ensure_schema()
 
     with engine.begin() as conn:
@@ -173,6 +179,17 @@ def upload(raw, filename, company_name):
         )
         df.to_sql(
             "claims",
+            con=conn,
+            if_exists="append",
+            index=False,
+            chunksize=1000,
+        )
+        conn.execute(
+            text("DELETE FROM provider_scores WHERE company_id=:cid"),
+            {"cid": company_id},
+        )
+        scores.to_sql(
+            "provider_scores",
             con=conn,
             if_exists="append",
             index=False,
@@ -193,6 +210,7 @@ def upload(raw, filename, company_name):
         "company_id": company_id,
         "rows_loaded": len(df),
         "anomalies": int(df["anomaly"].sum()),
+        "providers_scored": int(len(scores)),
         "risk_levels": {
             k: int(v) for k, v in df["risk_level"].value_counts().items()
         },
